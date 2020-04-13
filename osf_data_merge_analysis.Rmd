@@ -1,0 +1,2924 @@
+---
+title: "Data Merge and Clean"
+author: "Benjamin W Nelson"
+author: "Adam Pettitt"
+date: "4/6/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+```{r}
+packages <- c("magrittr","tidyverse","leaflet","leaflet.extras","car","sjPlot","janitor","corrplot","psych","lmerTest")
+if (length(setdiff(packages, rownames(installed.packages()))) > 0) {
+  install.packages(setdiff(packages, rownames(installed.packages())))
+}
+lapply(packages, library, character.only = TRUE)
+
+rm(list=ls())
+
+```
+
+```{r}
+qualtrics_data_final <- read.csv("~/Dropbox/COVID-19 Study/Data/qualtrics_final_countries.csv")
+#load("~/Dropbox/COVID-19 Study/Data/covid data 4.6.20.RData")
+
+world_data <- read.csv("~/Dropbox/COVID-19 Study/Data/complete_world_data.csv")
+
+world_data$province_state <- as.character(world_data$province_state)
+world_data$country_region <- as.character(world_data$country_region)
+
+lockdown_data <- read.csv("~/Dropbox/COVID-19 Study/Data/Lockdown/countryLockdowndates.csv")
+
+```
+
+```{r}
+lockdown_data <- clean_names(lockdown_data,"snake")
+
+lockdown_data$lockdown_date <- as.Date(lockdown_data$date, "%d/%m/%y")
+
+lockdown_data$country_region <- gsub("US","United States",lockdown_data$country_region)
+lockdown_data$province <- gsub("District of Columbia","District Of Columbia",lockdown_data$province)
+
+lockdown_data$province_state <- as.character(lockdown_data$province)
+
+lockdown_data <- dplyr::select(lockdown_data, -date,-reference,-province,-type)
+
+```
+
+
+```{r}
+world_data$country_region <- gsub("UK","United Kingdom",world_data$country_region)
+world_data$country_region <- gsub("US","United States",world_data$country_region)
+
+world_data$date <- as.Date(world_data$date)
+
+world_data <- world_data %>%
+  drop_na(date) %>%
+  group_by(province_state) %>%
+  filter(confirmed > 0) %>%
+  mutate(state_diff_days = difftime(date, min(date),units="days")) %>%
+  right_join(world_data) %>%
+  mutate(state_diff_days = replace_na(state_diff_days, 0)) 
+
+country_level <- world_data %>%
+  group_by(date,country_region) %>%
+  distinct(confirmed_country)
+
+country_level <- country_level %>%
+  drop_na(date) %>%
+  group_by(country_region) %>%
+  filter(confirmed_country > 0) %>%
+  mutate(country_diff_days = difftime(date, min(date),units="days")) %>%
+  right_join(country_level) %>%
+  mutate(country_diff_days = replace_na(country_diff_days, 0)) 
+```
+
+```{r}
+world_level <- world_data %>%
+  group_by(date) %>%
+  distinct(confirmed_world)
+
+world_level <- world_level %>%
+  group_by() %>%
+  mutate(world_diff_days = difftime(date, min(date),units="days")) 
+```
+
+```{r}
+
+world_data$country_region <- as.factor(world_data$country_region)
+
+qualtrics_data_final$date <- as.Date(qualtrics_data_final$start_date)
+
+world_data$date <- as.Date(world_data$date)
+world_level$date <- as.Date(world_level$date)
+country_level$date <- as.Date(country_level$date)
+
+qualtrics_data_final <- left_join(qualtrics_data_final,world_data,by=c("country_region","province_state","date"))
+
+qualtrics_data_final <- qualtrics_data_final %>%
+  dplyr::select(-confirmed_country,-confirmed_world)
+
+qualtrics_data_final <- left_join(qualtrics_data_final,country_level,by=c("country_region","date"))
+
+qualtrics_data_final <- qualtrics_data_final %>% 
+  left_join(lockdown_data,by=c("country_region","province_state")) 
+
+lockdown_data <- lockdown_data %>%
+  dplyr::filter(province_state == "") %>%
+  dplyr::select(-province_state) %>%
+  dplyr::rename(lockdown_date.x = lockdown_date)
+
+qualtrics_data_final <- qualtrics_data_final %>%
+  left_join(lockdown_data,by=c("country_region")) %>%
+  mutate(lockdown_date = coalesce(lockdown_date,lockdown_date.x)) %>%
+  dplyr::select(-lockdown_date.x)
+
+update_states <- tibble(province_state = c("District Of Columbia","Georgia","South Carolina","Wyoming"), lockdown_date.x = c("2020-04-01","2020-04-03","2020-04-07","2020-03-28")) 
+
+update_states$lockdown_date.x <- as.Date(update_states$lockdown_date.x)
+
+qualtrics_data_final <- qualtrics_data_final %>%
+  left_join(update_states,by=c("province_state")) %>%
+  mutate(lockdown_date = coalesce(lockdown_date,lockdown_date.x)) %>%
+  dplyr::select(-lockdown_date.x)
+
+qualtrics_data_final %>%
+  dplyr::select(country_region,province_state,lockdown_date)
+
+qualtrics_data_final <- left_join(qualtrics_data_final,world_level,by=c("date"))
+
+
+
+qualtrics_data_final <- qualtrics_data_final %>%
+  drop_na(date) %>%
+  group_by(country_region,province_state) %>%
+  mutate(days_since_lockdown = difftime(date, lockdown_date,units="days")) 
+
+#test <- qualtrics_data_final %>%
+  #mutate(days_since_lockdown =  ifelse(days_since_lockdown < 0 | is.na(days_since_lockdown), 0,days_since_lockdown)) %>%
+  #select(country_region,province_state,days_since_lockdown,lockdown_date,date)
+
+qualtrics_data_final$confirmed_log <- log(qualtrics_data_final$confirmed)
+qualtrics_data_final$confirmed_country_log <- log(qualtrics_data_final$confirmed_country)
+qualtrics_data_final$confirmed_world_log <- log(qualtrics_data_final$confirmed_world)
+
+data_final <- qualtrics_data_final
+
+data_final <- data_final %>% 
+  dplyr::select(-X.x)
+
+str(data_final$covid_concern)
+```
+#Data Cleaning
+
+##Remove Columns that Won't Be Used
+```{r}
+variables_remove <- names(data_final) %in% c("finished",
+                                             "sig_req",
+                                             "sig_pic",
+                                             "sig_size",
+                                             "sig_type",
+                                             "email") # Identify variables you want to remove
+
+data_final <- data_final[!variables_remove]
+data_final <- data_final %>% 
+  dplyr::select(-X.y)
+```
+
+##Numeric
+```{r}
+# Change variables to numeric
+cols_num <- c("phq_q1", 
+              "phq_q2",
+              "gad_q1",
+              "gad_q2")
+data_final[, cols_num] %<>%
+  lapply(function(x) as.numeric(as.character(x)))
+```
+
+##Clean PHQ
+```{r}
+data_final$phq_total <- data_final$phq_q1 + data_final$phq_q2
+```
+
+##Clean GAD
+```{r}
+data_final$gad_total <- data_final$gad_q1 + data_final$gad_q2
+```
+
+##Clean COVID Concern
+```{r}
+str(data_final$covid_concern)
+
+data_final$covid_concern <- factor(data_final$covid_concern,
+                                             levels = c(0, 1, 2, 3, 4),
+                                             labels = c("Not at all concerned", 
+                                                        "A little concerned",
+                                                        "Moderately concerned",
+                                                        "Very concerned",
+                                                        "Extremely concerned"))
+
+data_final$covid_concern_integer <- as.integer(data_final$covid_concern)
+describe(data_final$covid_concern_integer)
+
+covid_concern <- data_final %>%
+  group_by(covid_concern) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$covid_concern))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+covid_concern$covid_concern <- factor(covid_concern$covid_concern, levels = covid_concern$covid_concern[order(covid_concern$n)])
+covid_concern$covid_concern  # notice the changed order of factor levels
+
+
+covid_concern_plot <- covid_concern %>%
+  ggplot( aes(x=covid_concern, y=n)) +
+  geom_bar(stat="identity", fill="#D95F02FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "COVID-19 Concern")
+covid_concern_plot
+```
+
+
+##Clean Race
+```{r}
+data_final <-  data_final %>%
+  mutate(race_cleaned = ifelse(race %in% '1', "1",
+                               ifelse(race %in% '2', "2",
+                                      ifelse(race %in% '3', "3",
+                                             ifelse(race %in% '4', "4",
+                                                    ifelse(race %in% '5', "5",
+                                                           ifelse(race %in% '6', "6",
+                                                                  ifelse(race %in% '7', "7",
+                                                                         ifelse(race %in% '8', "7", "8"
+                                                                         )))))))))
+#The last line changes "prefer to self-describe" to "race not listed" and then makes any participant that put more than one race as 8
+
+data_final$race_cleaned <- factor(data_final$race_cleaned,
+                                            levels = c(1, 2, 3, 4, 5, 6, 7, 8), 
+                                            labels = c("White/Caucasian", 
+                                                       "Black/African-American",
+                                                       "Latino/Latina/Latinx",
+                                                       "Asian",
+                                                       "Pacific Islander/Native Hawaiian",
+                                                       "Native American/Alaskan Native",
+                                                       "Race not listed",
+                                                       "More than one race"))
+
+
+
+library(forcats)
+
+race <- data_final %>%
+  group_by(race_cleaned) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$race_cleaned))*100) %>% 
+  arrange(desc(n))
+
+
+race$race_cleaned <- factor(race$race_cleaned, levels = race$race_cleaned[order(race$n)])
+race$race_cleaned  # notice the changed order of factor levels
+
+
+race_plot <- race %>%
+  ggplot( aes(x=race_cleaned, y=n)) +
+    geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+    coord_flip() +
+    xlab("") +
+    theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+    panel.grid.major = element_line(colour = "black", 
+        linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+        linetype = "blank"), axis.title = element_text(size = 12), 
+    axis.text = element_text(size = 12, colour = "black"), 
+    axis.text.x = element_text(colour = "black"), 
+    axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+    axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+    linetype = "solid")) + 
+    labs(title = "Race")
+race_plot
+
+
+```
+
+##Clean Ethnicity
+```{r}
+data_final$ethnicity_cleaned <- factor(data_final$ethnicity,
+                                                 levels = c(1, 2, 3),
+                                                 labels = c("Hispanic", 
+                                                            "Non-Hispanic",
+                                                            "Prefer not to answer"))
+
+
+ethnicity <- data_final %>%
+  group_by(ethnicity_cleaned) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$ethnicity_cleaned))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+ethnicity$ethnicity_cleaned <- factor(ethnicity$ethnicity_cleaned, levels = ethnicity$ethnicity_cleaned[order(ethnicity$n)])
+ethnicity$ethnicity_cleaned  # notice the changed order of factor levels
+
+
+ethnicity_plot <- ethnicity %>%
+  ggplot( aes(x=ethnicity_cleaned, y=n)) +
+  geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+    labs(title = "Ethnicity")
+ethnicity_plot
+
+
+```
+
+##Clean Gender
+```{r}
+data_final$gender_cleaned <- factor(data_final$gender,
+                                              levels = c(0, 1, 2, 3, 4),
+                                              labels = c("Male/Man", 
+                                                         "Female/Woman",
+                                                         "Nonbinary",
+                                                         "Prefer to self describe",
+                                                         "Prefer not to answer"))
+
+gender <- data_final %>%
+  group_by(gender_cleaned) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$gender_cleaned))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+gender$gender_cleaned <- factor(gender$gender_cleaned, levels = gender$gender_cleaned[order(gender$n)])
+gender$gender_cleaned  # notice the changed order of factor levels
+
+
+gender_plot <- gender %>%
+  ggplot( aes(x=gender_cleaned, y=n)) +
+  geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+    labs(title = "Gender")
+gender_plot
+```
+
+##Clean Flu Sxs
+```{r}
+data_final$flu_sxs_personal <- factor(data_final$flu_sxs_personal,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+flu_personal <- data_final %>%
+  group_by(flu_sxs_personal) %>%
+  count() %>%
+  arrange(desc(n)) %>% 
+  drop_na()
+
+flu_personal_plot <- flu_personal %>%
+  ggplot( aes(x=flu_sxs_personal, y=n)) +
+  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid"))+
+  labs(title = "Any Personal Flu Symptoms?")
+flu_personal_plot
+
+#####################
+
+
+data_final$flu_sxs_other <- factor(data_final$flu_sxs_other,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+flu_other <- data_final %>%
+  group_by(flu_sxs_other) %>%
+  count() %>%
+  arrange(desc(n)) %>% 
+  drop_na()
+
+flu_other_plot <- flu_other %>%
+  ggplot( aes(x=flu_sxs_other, y=n)) +
+  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Know Other's With Flu Symptoms?")
+flu_other_plot
+
+#############################
+
+##For specific measures change NA to 0
+
+data_final$flu_sxs_other_number[is.na(data_final$flu_sxs_other_number)] <- 0
+
+data_final$hospitalized_number[is.na(data_final$hospitalized_number)] <- 0
+#describe(data_final$hospitalized_number)
+
+data_final$passed_away_number[is.na(data_final$passed_away_number)] <- 0
+#describe(data_final$passed_away_number) #One participant entered value of 34646762600, replace with NA
+
+data_final <- data_final %>% 
+  naniar::replace_with_na(replace = list(passed_away_number = 34646762600))
+
+describe(data_final$passed_away_number)
+
+
+
+#Clean Type of Symptoms
+#Use this code to create separate columns for each symptom
+#data <- data %>%
+  #mutate(
+    #share_keyboard = ifelse(grepl("keyboard", data_types_share), "yes", "no"),
+    #share_geolocation = ifelse(grepl("Geolocation", data_types_share), "yes", "no"),
+    #share_selfies = ifelse(grepl("Selfies", data_types_share), "yes", "no"),
+    #share_voice = ifelse(grepl("Voice", data_types_share), "yes", "no"),
+    #share_movement = ifelse(grepl("Movement", data_types_share), "yes", "no")
+#  )
+```
+
+##Clean COVID Test
+```{r}
+#Note 4 and 6 are the same, because an additional option was entered to qualtrics
+data_final$covid_test <- factor(data_final$covid_test,
+                                              levels = c(1, 2, 3, 4, 5, 6),
+                                              labels = c("Yes, positive", 
+                                                         "Yes, negative",
+                                                         "Yes, waiting for results",
+                                                         "No, did not try",
+                                                         "No, could not get test",
+                                                         "No, did not try"))
+
+covid_test <- data_final %>%
+  group_by(covid_test) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$covid_test))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+covid_test$covid_test <- factor(covid_test$covid_test, levels = covid_test$covid_test[order(covid_test$n)])
+covid_test$covid_test  # notice the changed order of factor levels
+
+
+covid_test_plot <- covid_test %>%
+  ggplot( aes(x=covid_test, y=n)) +
+  geom_bar(stat="identity", fill="#D95F02FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Received COVID-19 Testing?")
+covid_test_plot
+
+
+```
+
+##Clean Hopsitalized
+```{r}
+data_final$hospitalized <- factor(data_final$hospitalized,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+hospitalized <- data_final %>%
+  group_by(hospitalized) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$hospitalized))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+hospitalized$hospitalized <- factor(hospitalized$hospitalized, levels = hospitalized$hospitalized[order(hospitalized$n)])
+hospitalized$hospitalized  # notice the changed order of factor levels
+
+
+hospitalized_plot <- hospitalized %>%
+  ggplot( aes(x=hospitalized, y=n)) +
+  geom_bar(stat="identity", fill="#D95F02FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Hospitalized due to COVID-19?")
+hospitalized_plot
+
+```
+
+##Clean Passed Away
+```{r}
+data_final$passed_away <- factor(data_final$passed_away,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+passed_away <- data_final %>%
+  group_by(passed_away) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$passed_away))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+passed_away$passed_away <- factor(passed_away$passed_away, levels = passed_away$passed_away[order(passed_away$n)])
+passed_away$passed_away  # notice the changed order of factor levels
+
+
+passed_away_plot <- passed_away %>%
+  ggplot( aes(x=passed_away, y=n)) +
+  geom_bar(stat="identity", fill="#D95F02FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Personally know persons passed away?")
+passed_away_plot
+```
+
+##Clean Lifestyle Changes
+```{r}
+data_final$lifestyle_changes <- factor(data_final$lifestyle_changes,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+lifestyle_changes <- data_final %>%
+  group_by(lifestyle_changes) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$lifestyle_changes))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+lifestyle_changes$lifestyle_changes <- factor(lifestyle_changes$lifestyle_changes, levels = lifestyle_changes$lifestyle_changes[order(lifestyle_changes$n)])
+lifestyle_changes$lifestyle_changes  # notice the changed order of factor levels
+
+
+lifestyle_changes_plot <- lifestyle_changes %>%
+  ggplot( aes(x=lifestyle_changes, y=n)) +
+  geom_bar(stat="identity", fill="#66A61EFF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Made Changes to Lifestyle?")
+lifestyle_changes_plot
+
+```
+
+##Clean Quarantine
+```{r}
+data_final$self_quarantine <- factor(data_final$self_quarantine,
+                                              levels = c(0, 1, 2, 3),
+                                              labels = c("None of the time", 
+                                                         "Some of the time",
+                                                         "Most of the time",
+                                                         "All of the time"))
+
+self_quarantine <- data_final %>%
+  group_by(self_quarantine) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$self_quarantine))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+self_quarantine$self_quarantine <- factor(self_quarantine$self_quarantine, levels = self_quarantine$self_quarantine[order(self_quarantine$n)])
+self_quarantine$self_quarantine  # notice the changed order of factor levels
+
+
+quarantine_plot <- self_quarantine %>%
+  ggplot( aes(x=self_quarantine, y=n)) +
+  geom_bar(stat="identity", fill="#66A61EFF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Degree of Self-Quarantine")
+quarantine_plot
+```
+
+##Clean Job
+```{r}
+data_final$job_lost <- factor(data_final$job_lost,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+job_lost <- data_final %>%
+  group_by(job_lost) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$job_lost))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+job_lost$job_lost <- factor(job_lost$job_lost, levels = job_lost$job_lost[order(job_lost$n)])
+job_lost$job_lost  # notice the changed order of factor levels
+
+
+job_lost_plot <- job_lost %>%
+  ggplot( aes(x=job_lost, y=n)) +
+  geom_bar(stat="identity", fill="#7570B3FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Job Loss")
+job_lost_plot
+
+#########################
+data_final$job_unable_work <- factor(data_final$job_unable_work,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+data_final %>%
+  group_by(job_unable_work) %>%
+  count() %>%
+  arrange(desc(n))
+
+#########################
+data_final$income_lost <- factor(data_final$income_lost,
+                                              levels = c(0, 1),
+                                              labels = c("No", 
+                                                         "Yes"))
+
+income_lost <- data_final %>%
+  group_by(income_lost) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$income_lost))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+income_lost$income_lost <- factor(income_lost$income_lost, levels = income_lost$income_lost[order(income_lost$n)])
+income_lost$income_lost  # notice the changed order of factor levels
+
+
+income_lost_plot <- income_lost %>%
+  ggplot( aes(x=income_lost, y=n)) +
+  geom_bar(stat="identity", fill="#7570B3FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Have you lost income?")
+income_lost_plot
+
+
+#########################
+data_final$money_situation <- factor(data_final$money_situation,
+                                              levels = c(1, 2, 3, 4),
+                                              labels = c("Comfortable with extra", 
+                                                         "Enough, but no extra",
+                                                         "Have to cut back",
+                                                         "Cannot make ends meet"))
+
+money_situation <- data_final %>%
+  group_by(money_situation) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$money_situation))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+money_situation$money_situation <- factor(money_situation$money_situation, levels = money_situation$money_situation[order(money_situation$n)])
+money_situation$money_situation  # notice the changed order of factor levels
+
+
+money_situation_plot <- money_situation %>%
+  ggplot( aes(x=money_situation, y=n)) +
+  geom_bar(stat="identity", fill="#7570B3FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Money Situation")
+money_situation_plot
+
+
+#########################
+data_final$food_security <- factor(data_final$food_security,
+                                              levels = c(1, 2, 3),
+                                              labels = c("Never true", 
+                                                         "Sometimes true",
+                                                         "Often true"))
+
+food_security <- data_final %>%
+  group_by(food_security) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$food_security))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+food_security$food_security <- factor(food_security$food_security, levels = food_security$food_security[order(food_security$n)])
+food_security$food_security  # notice the changed order of factor levels
+
+
+food_security_plot <- food_security %>%
+  ggplot( aes(x=food_security, y=n)) +
+  geom_bar(stat="identity", fill="#7570B3FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "During past 12 months, food we bought ran out and didn't have money to get
+more")
+food_security_plot
+
+
+#########################
+data_final$income <- factor(data_final$income,
+                                              levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9),
+                                              labels = c("Less than $4,999", 
+                                                         "$5,000-$9,999",
+                                                         "$10,000-$19,999",
+                                                         "$20,000-$49,999",
+                                                         "$50,000-$99,999",
+                                                         "$100,000-$149,999",
+                                                         "$150,000+",
+                                                         "Don’t know",
+                                                         "Prefer not to answer"))
+
+income <- data_final %>%
+  group_by(income) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$income))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+income$income <- factor(income$income, levels = income$income[order(income$n)])
+income$income  # notice the changed order of factor levels
+
+
+income_plot <- income %>%
+  ggplot( aes(x=income, y=n)) +
+  geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Yearly Income")
+income_plot
+
+```
+
+##Clean Education
+```{r}
+data_final$education <- factor(data_final$education,
+                                              levels = c(1, 2, 3, 4, 5, 6, 7),
+                                              labels = c("Some high school", 
+                                                         "High school diploma/GED",
+                                                         "Vocational/Technical school (2 years)",
+                                                         "Some college",
+                                                         "College graduate (4 years)",
+                                                         "Graduate or Professional degree",
+                                                         "Other"))
+
+education <- data_final %>%
+  group_by(education) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$education))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+education$education <- factor(education$education, levels = education$education[order(education$n)])
+education$education  # notice the changed order of factor levels
+
+
+education_plot <- education %>%
+  ggplot( aes(x=education, y=n)) +
+  geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Education")
+education_plot
+
+```
+
+##Clean Disability
+```{r}
+data_final <-  data_final %>%
+  mutate(disability = ifelse(disability %in% '1', "1",
+                               ifelse(disability %in% '2', "2",
+                                      ifelse(disability %in% '3', "3",
+                                             ifelse(disability %in% '4', "4", "5"
+                                                                         )))))
+#The last line makes any participant that put more than one disability a 5
+
+data_final$disability <- factor(data_final$disability,
+                                            levels = c(1, 2, 3, 4, 5),
+                                            labels = c("Physical Disability/Disabilities", 
+                                                       "Mental Disability/Disabilities",
+                                                       "No Disability",
+                                                       "Prefer not to answer",
+                                                       "Both Physical and Mental Disabilities"))
+
+data_final %>%
+  group_by(disability) %>%
+  count() %>%
+  arrange(desc(n))
+```
+
+##Clean Political Orientation
+```{r}
+data_final$political_orientation <- factor(data_final$political_orientation,
+                                              levels = c(1, 2, 3, 4, 5),
+                                              labels = c("Very Conservative", 
+                                                         "Conservative",
+                                                         "Moderate",
+                                                         "Liberal",
+                                                         "Very Liberal"))
+
+political_orientation <- data_final %>%
+  group_by(political_orientation) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$political_orientation))*100) %>% 
+  arrange(desc(n)) %>% 
+  drop_na()
+
+
+political_orientation$political_orientation <- factor(political_orientation$political_orientation, levels = political_orientation$political_orientation[order(political_orientation$n)])
+political_orientation$political_orientation  # notice the changed order of factor levels
+
+
+political_plot <- political_orientation %>%
+  ggplot( aes(x=political_orientation, y=n)) +
+  geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Political Orientation")
+political_plot
+
+```
+
+##Clean Occupation
+```{r}
+data_final <-  data_final %>%
+  mutate(occupation = ifelse(occupation %in% '1', "1",
+                      ifelse(occupation %in% '2', "2",
+                      ifelse(occupation %in% '3', "3",
+                      ifelse(occupation %in% '4', "4",
+                      ifelse(occupation %in% '5', "5",
+                      ifelse(occupation %in% '6', "6",
+                      ifelse(occupation %in% '7', "7",
+                      ifelse(occupation %in% '8', "8",
+                      ifelse(occupation %in% '9', "9",
+                      ifelse(occupation %in% '10', "10",
+                      ifelse(occupation %in% '11', "11",
+                      ifelse(occupation %in% '12', "12",
+                      ifelse(occupation %in% '13', "13",
+                      ifelse(occupation %in% '14', "14",
+                      ifelse(occupation %in% '15', "15",
+                      ifelse(occupation %in% '16', "16",
+                      ifelse(occupation %in% '17', "17",
+                      ifelse(occupation %in% '18', "18",
+                      ifelse(occupation %in% '19', "19",
+                      ifelse(occupation %in% '20', "20",
+                      ifelse(occupation %in% '21', "21",
+                      ifelse(occupation %in% '22', "22",
+                      ifelse(occupation %in% '23', "23",
+                      ifelse(occupation %in% '24', "24",
+                      ifelse(occupation %in% '25', "25", "26"
+                                                                         ))))))))))))))))))))))))))
+#The last line makes any participant that put more than one occupation
+data_final$occupation <- as.numeric(data_final$occupation)
+
+data_final$occupation <- factor(data_final$occupation,
+                                            levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26),
+                                            labels = c("Management", 
+                                                       "Business/Financial",
+                                                       "Computer/Mathematical",
+                                                       "Architecture/Engineering",
+                                                       "Life/Physical/Social Science",
+                                                       "Community/Social Service ",
+                                                       "Legal ",
+                                                       "Teaching/Library",
+                                                       "Arts/Design/Sports/Media ",
+                                                       "Healthcare Practice/Technical",
+                                                       "Healthcare/Support",
+                                                       "Protective Service",
+                                                       "Food Preparation/Serving",
+                                                       "Cleaning/Maintenance",
+                                                       "Personal Care/Service",
+                                                       "Sales",
+                                                       "Office/Administrative Support",
+                                                       "Farming/Fishing/Forestry",
+                                                       "Construction/Extraction",
+                                                       "Installation/Maintenance/Repair",
+                                                       "Production",
+                                                       "Transportation/Material Moving",
+                                                       "Military Specific",
+                                                       "Student",
+                                                       "Other",
+                                                       "More Than One Occupation"))
+
+occupation <- data_final %>%
+  group_by(occupation) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$occupation))*100) %>% 
+  arrange(desc(n))
+
+
+occupation$occupation <- factor(occupation$occupation, levels = occupation$occupation[order(occupation$n)])
+occupation$occupation  # notice the changed order of factor levels
+
+
+occupation_plot <- occupation %>%
+  ggplot( aes(x=occupation, y=n)) +
+  geom_bar(stat="identity", fill="#7570B3FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Occupation")
+occupation_plot
+```
+
+##Clean Household
+```{r}
+data_final$household_makeup <- factor(data_final$household_makeup,
+                                              levels = c(1, 2, 3, 4, 5, 6, 7, 8),
+                                              labels = c("live alone", 
+                                                         "live with roommate or housemate",
+                                                         "live with partner",
+                                                         "live with partner and children under 18 years old",
+                                                         "live with partner and relative over the age of 65 years old",
+                                                         "live with children under 18 years old (no partner)",
+                                                         "live with relative over the age of 65 years old (no partner)",
+                                                         "other"))
+
+household_makeup <- data_final %>%
+  group_by(household_makeup) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$household_makeup))*100) %>% 
+  arrange(desc(n))
+
+
+household_makeup$household_makeup <- factor(household_makeup$household_makeup, levels = household_makeup$household_makeup[order(household_makeup$n)])
+household_makeup$household_makeup  # notice the changed order of factor levels
+
+
+household_plot <- household_makeup %>%
+  ggplot( aes(x=household_makeup, y=n)) +
+  geom_bar(stat="identity", fill="#1B9E77FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Household Makeup")
+household_plot
+
+
+data_final$household_conflict <- factor(data_final$household_conflict,
+                                              levels = c(1, 2, 3, 4, 5),
+                                              labels = c("Strongly disagree", 
+                                                         "Somewhat disagree",
+                                                         "Neither agree nor disagree",
+                                                         "Somewhat agree",
+                                                         "Strongly agree"))
+
+data_final %>%
+  group_by(household_conflict) %>%
+  count()
+```
+
+##Clean Recruitment Source
+```{r}
+data_final$recruitment_source <- factor(data_final$recruitment_source,
+                                              levels = c(1, 2, 3, 4),
+                                              labels = c("Twitter", 
+                                                         "Facebook",
+                                                         "Instagram",
+                                                         "Other"))
+
+data_final$Recruitment_source_self_describe <- as.character(data_final$Recruitment_source_self_describe)
+
+to_reddit <- c("redd","Redd","r/","rebbit","R/","Readit","RED","Redit")
+
+for(i in to_reddit){
+  data_final$Recruitment_source_self_describe[grepl(i, data_final$Recruitment_source_self_describe)] <- "Reddit"
+}
+
+data_final %>%
+  group_by(Recruitment_source_self_describe) %>%
+  count() %>%
+  arrange(desc(n))
+
+to_wom <- c("Friend","friend","Ben","co-worker","colleague","mom","brother","supervisor","partner","sent","Roommate","shared","Sister","door.com")
+
+for(i in to_wom){
+  data_final$Recruitment_source_self_describe[grepl(i, data_final$Recruitment_source_self_describe)] <- "Word of Mouth"
+}
+
+to_other <- c("https://docs.google.com/spreadsheets/d/","handbook")
+
+for(i in to_other){
+  data_final$Recruitment_source_self_describe[grepl(i, data_final$Recruitment_source_self_describe)] <- "Other"
+}
+
+data_final %>%
+  group_by(Recruitment_source_self_describe) %>%
+  count() %>%
+  arrange(desc(n))
+
+data_final$recruitment_source <- as.character(data_final$recruitment_source)
+
+data_final <- data_final %>% 
+  mutate(recruitment_source = ifelse(recruitment_source == "Other" & !is.na(Recruitment_source_self_describe), Recruitment_source_self_describe, recruitment_source)) 
+
+data_final <- data_final %>%
+  mutate(recruitment_source = replace_na(recruitment_source,"No Response Provided")) 
+
+data_final$recruitment_source <- as.factor(data_final$recruitment_source)
+
+recruitment_source <- data_final %>%
+  group_by(recruitment_source) %>%
+  count() %>%
+  mutate(percentage = (n/length(data_final$recruitment_source))*100) %>% 
+  arrange(desc(n))
+
+
+recruitment_source$recruitment_source <- factor(recruitment_source$recruitment_source, levels = recruitment_source$recruitment_source[order(recruitment_source$n)])
+recruitment_source$recruitment_source  # notice the changed order of factor levels
+
+
+recruitment_plot <- recruitment_source %>%
+  ggplot( aes(x=recruitment_source, y=n)) +
+  geom_bar(stat="identity", fill="#E6AB02FF", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+                     panel.grid.major = element_line(colour = "black", 
+                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+                                                                                                          linetype = "blank"), axis.title = element_text(size = 12), 
+                     axis.text = element_text(size = 12, colour = "black"), 
+                     axis.text.x = element_text(colour = "black"), 
+                     axis.text.y = element_text(colour = "black")) +
+  labs(x = NULL, y = "Number of Participants") +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(size = 1)) + 
+  theme(panel.grid.major = element_line(size = 0.1, 
+                                        linetype = "solid")) + 
+  labs(title = "Recruitment Source")
+recruitment_plot
+
+```
+
+
+###Numeric
+```{r}
+# Change variables to numeric
+cols_num <- c("phq_total", 
+              "gad_total",
+              "zipcode", 
+              "flu_sxs_other_number", 
+              "hospitalized_number", 
+              "passed_away_number", 
+              "age",
+              "confirmed",
+              "deaths",
+              "recovered",
+              "deaths_country",
+              "recovered_country",
+              "deaths_world",
+              "recovered_world",
+              "confirmed_country",
+              "confirmed_world"
+              )
+data_final[, cols_num] %<>%
+  lapply(function(x) as.numeric(as.character(x)))
+```
+
+##Age
+```{r}
+describe(data_final$age)
+
+#age <- data_final %>%
+ # group_by(age) %>%
+ # count()
+
+#age_plot <- age %>%
+#  ggplot( aes(x=n, y=age)) +
+#  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+#  coord_flip() +
+#  xlab("") +
+#  theme_bw() + theme(axis.ticks = element_line(colour = "black"), 
+ #                    panel.grid.major = element_line(colour = "black", 
+#                                                     linetype = "blank"), panel.grid.minor = element_line(colour = "black", 
+#                                                                                                          linetype = "blank"), axis.title = #element_text(size = 12), 
+ #                    axis.text = element_text(size = 12, colour = "black"), 
+  #                   axis.text.x = element_text(colour = "black"), 
+  #                   axis.text.y = element_text(colour = "black")) +
+ # labs(x = "Number of Participants", y = "Age") +
+ # theme(axis.line = element_line(linetype = "solid"), 
+ #       axis.ticks = element_line(size = 1)) + 
+#  theme(panel.grid.major = element_line(size = 0.1, 
+#                                        linetype = "solid"))+
+#  labs(title = "Age")
+#age_plot
+
+```
+
+##Time to complete survey
+```{r}
+describe((data_final$duration_secs)/60)
+```
+
+
+
+
+#Map
+```{r}
+data_final$lat_n <- as.numeric(data_final$latitude)
+data_final$long_n <- as.numeric(data_final$longitude)
+
+#Remove lat and long NAs
+#map_data <- dplyr::filter(data_final, data_final$long_n != "NA")
+#map_data <- dplyr::filter(data_final, data_final$lat_n != "NA")
+
+map_data <- data_final %>%
+  drop_na(lat_n,long_n)
+
+map_data <- map_data %>% 
+  dplyr::filter(!(country == "United Kingdom" & city == "Cambridge"))
+map_data <- map_data %>% 
+  dplyr::filter(!(country == "United States" & city == "New Kensington"))
+
+
+globe_figure <- leaflet(map_data) %>% 
+  addProviderTiles(providers$OpenStreetMap) %>%
+  setView( 178, -20, 5 ) %>%
+  addHeatmap(lng = ~long_n, lat = ~lat_n,
+             blur = 20, max = 0.8, radius = 15) %>% 
+  addCircleMarkers(~long_n, ~lat_n, 
+                   radius = 1,
+                   stroke = FALSE, 
+                   fillOpacity = .5,
+                   label = ~as.character(city)) %>% 
+  addMiniMap(tiles = providers$OpenStreetMap,
+             toggleDisplay = TRUE)
+globe_figure
+```
+
+#Demographic Figures
+```{r}
+#Identity Plot
+identity_plot <- ggpubr::ggarrange(race_plot, ethnicity_plot, gender_plot, political_plot, education_plot, income_plot,
+                  labels = c("A", "B", "C", "D", "E", "F"),
+                  ncol = 2, nrow = 3)
+identity_plot
+
+#Health Plot
+health_plot <- ggpubr::ggarrange(covid_concern_plot, covid_test_plot, flu_personal_plot, flu_other_plot, hospitalized_plot, passed_away_plot,
+                  labels = c("A", "B", "C", "D", "E", "F"),
+                  ncol = 2, nrow = 3)
+health_plot
+
+#Finance Plot
+finance_plot <- ggpubr::ggarrange(occupation, income_lost_plot, job_lost_plot, money_situation_plot, food_security_plot,
+                  labels = c("A", "B", "C", "D", "E"),
+                  ncol = 2, nrow = 3)
+finance_plot
+
+finance_plot2 <- (income_lost_plot + job_lost_plot) /
+(money_situation_plot + food_security_plot)
+
+finance_plot2
+
+
+#Behavior Plot
+behavior_plot <- ggpubr::ggarrange(lifestyle_changes_plot, quarantine_plot,
+                  labels = c("A", "B"),
+                  ncol = 2, nrow = 1)
+
+behavior_plot
+
+#Recruitment Plot
+recruitment_plot <- ggpubr::ggarrange(recruitment_plot,
+                  labels = c("A"),
+                  ncol = 1, nrow = 1)
+recruitment_plot
+
+identity_plot + health_plot
+ 
+occupation_plot
+ 
+finance_plot2 / behavior_plot
+
+
+#1B9E77FF
+#D95F02FF
+#7570B3FF
+#66A61EFF
+#E6AB02FF
+
+
+```
+
+
+
+#Analysis 1: Comparing GAD and PHQ Scores to Historical Data
+##Analysis 1a: Comparing GAD and PHQ Mean Scores to Historical Data
+
+###General Population Values and Threshold Values
+Löwe, B., Wahl, I., Rose, M., Spitzer, C., Glaesmer, H., Wingenfeld, K., ... & Brähler, E. (2010). A 4-item measure of depression and anxiety: validation and standardization of the Patient Health Questionnaire-4 (PHQ-4) in the general population. Journal of affective disorders, 122(1-2), 86-95.
+```{r}
+threshold <- 3.0
+gad_pop_mean <- 0.82
+gad_pop_se <- 1.10
+phq_pop_mean <- 0.94
+phq_pop_se <- 1.20
+```
+
+###Gad Figure
+```{r}
+gad_descriptives <- describe(data_final$gad_total)
+gad_descriptives <- gad_descriptives %>% 
+  dplyr::select(mean, sd)
+names(gad_descriptives)[names(gad_descriptives) == "mean"] <- "gad_mean"
+names(gad_descriptives)[names(gad_descriptives) == "sd"] <- "gad_sd"
+gad_descriptives$gad_measure <- "Gad Measure"
+
+
+#gp_mean <- "General Population Mean: 0.82"
+#gad_cuttoff <- "GAD-2 Dx Cuttoff"
+
+Line = c("General Population Average \nGAD-2 Score","GAD-2 Diagnosis \nCutoff Score")
+score = as.numeric(c(0.82,3))
+lines <- data.frame(Line,score)
+lines$Line <- as.factor(lines$Line)
+lines$Line <- relevel(lines$Line, "General Population Average \nGAD-2 Score")
+gad_figure <- ggplot(gad_descriptives,aes(x=gad_measure, y=gad_mean,fill=gad_mean)) +
+  geom_bar(stat="identity", fill="#1B9E77FF",width=0.4) + 
+  geom_errorbar(aes(ymin=gad_mean - gad_sd, ymax= gad_mean + gad_sd),width=0.2, linetype = "longdash", color = "black", alpha = 0.4) +
+  theme(aspect.ratio = 2/1) +
+  geom_text(aes(1.5,2.8,label = "3.0")) +
+  geom_text(aes(1.5,.62,label = ".82")) +
+  geom_hline(data=lines, aes(yintercept = score, linetype=Line, color = Line)) +
+  ylab("GAD-2 Score Range") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.text.x=element_blank()) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.line=element_blank()) +
+  scale_y_continuous(expand = c(0,0),limits = c(0,6)) +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(colour = "black"), 
+        axis.title = element_text(size = 12), 
+        axis.text = element_text(size = 12, colour = "black"), 
+        axis.text.y = element_text(colour = "black"), 
+        legend.key = element_rect(fill = "white"), 
+        legend.background = element_rect(fill = "white"), 
+        legend.position = "bottom") +labs(x = "GAD-2 Measure", fill = NULL)+labs(colour = NULL, linetype = NULL)  +
+  scale_colour_manual(values = c("black","red"))
+
+gad_figure
+```
+
+###PHQ Figure
+```{r}
+phq_descriptives <- describe(data_final$phq_total)
+phq_descriptives <- phq_descriptives %>% 
+  dplyr::select(mean, sd)
+names(phq_descriptives)[names(phq_descriptives) == "mean"] <- "phq_mean"
+names(phq_descriptives)[names(phq_descriptives) == "sd"] <- "phq_sd"
+phq_descriptives$phq_measure <- "phq measure"
+
+#colnames(phq_descriptives) <- c("phq_mean", "phq_sd", "measure")
+#phq_descriptives %>% dplyr::add_column(phq_score = 0:6)
+#gp_mean <- "General Population Mean: 0.82"
+#phq_cuttoff <- "GAD-2 Dx Cuttoff"
+
+Line = c("General Population Average \nPHQ-2 Score","PHQ-2 Diagnosis \nCutoff Score")
+score = as.numeric(c(0.94,3.0))
+lines <- data.frame(Line,score)
+lines$Line <- as.factor(lines$Line)
+#lines$Line <- relevel(lines$Line, "PHQ-2 Diagnosis \nCuttoff Score")
+
+phq_figure <- ggplot(phq_descriptives,aes(x=phq_measure, y=phq_mean,fill=phq_mean)) +
+  geom_bar(stat="identity", fill="#D95F02FF",width=0.4) + 
+  geom_errorbar(aes(ymin=phq_mean - phq_sd, ymax= phq_mean + phq_sd),width=0.2, linetype = "longdash", color = "black", alpha = 0.4) +
+  theme(aspect.ratio = 2/1) +
+  geom_text(aes(1.5,2.8,label = "3.0")) +
+  geom_text(aes(1.5,.74,label = ".94")) +
+  geom_hline(data=lines, aes(yintercept = score, linetype=Line, color = Line)) +
+  ylab("PHQ-2 Score Range") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.text.x=element_blank()) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.line=element_blank()) +
+  scale_y_continuous(expand = c(0,0),limits = c(0,6)) +
+  theme(axis.line = element_line(linetype = "solid"), 
+        axis.ticks = element_line(colour = "black"), 
+        axis.title = element_text(size = 12), 
+        axis.text = element_text(size = 12, colour = "black"), 
+        axis.text.y = element_text(colour = "black"), 
+        legend.key = element_rect(fill = "white"), 
+        legend.background = element_rect(fill = "white"), 
+        legend.position = "bottom") +labs(x = "PHQ-2 Measure", fill = NULL)+labs(colour = NULL, linetype = NULL)  +
+  scale_colour_manual(values = c( "black", "red"))
+
+phq_figure
+```
+
+```{r}
+ggpubr::ggarrange(gad_figure, phq_figure,
+          labels = c("A", "B"),
+          ncol = 2, nrow = 1)
+```
+
+##Analysis 1b: Comparing GAD and PHQ Diagnosis to 12-Month Prevalence Rate
+```{r}
+#GAD Dx Threshold Percent
+gad_dx <- data_final %>% 
+  dplyr::select(c(gad_total, covid_concern))
+
+gad_dx <- gad_dx %>% 
+  mutate(dx_threshold = ifelse(gad_total %in% '0', "0",
+                               ifelse(gad_total %in% '1', "0",
+                                      ifelse(gad_total %in% '2', "0", "1"))))
+
+gad_dx$dx_threshold <- factor(gad_dx$dx_threshold,
+                                  levels = c(0, 1),
+                                  labels = c("Healthy", 
+                                             "GAD Dx"))
+
+data.table::setDT(gad_dx)
+gad_dx <- gad_dx %>% 
+  dplyr::select(-country_region, -province_state)
+
+gad_dx <- gad_dx %>%
+    group_by(dx_threshold) %>%
+    count() %>%
+  mutate(percentage = (n/length(gad_dx$dx_threshold))*100)
+
+#PHQ Dx Threshold Percent
+phq_dx <- data_final %>% 
+  dplyr::select(c(phq_total, covid_concern))
+
+phq_dx <- phq_dx %>% 
+  mutate(dx_threshold = ifelse(phq_total %in% '0', "0",
+                               ifelse(phq_total %in% '1', "0",
+                                      ifelse(phq_total %in% '2', "0", "1"))))
+
+phq_dx$dx_threshold <- factor(phq_dx$dx_threshold,
+                                  levels = c(0, 1),
+                                  labels = c("Healthy", 
+                                             "PHQ Dx"))
+
+data.table::setDT(phq_dx)
+phq_dx <- phq_dx %>% 
+  dplyr::select(-country_region, -province_state)
+
+phq_dx <- phq_dx %>%
+    group_by(dx_threshold) %>%
+    count() %>%
+  mutate(percentage = (n/length(phq_dx$dx_threshold))*100)
+```
+
+```{r}
+#GAD Single-sample T-test
+
+gad_t <- tidy(t.test(data_final$gad_total, mu = .82))
+
+gad_t
+
+```
+
+```{r}
+#PHQ Single-sample T-test
+
+phq_t <- tid(t.test(data_final$phq_total, mu = .94))
+
+phq_t
+```
+
+
+#Analyses 2: GAD, PHQ, and Infection by COVID Concern
+##Analysis 2a: Gad by COVID Concern
+###Figures
+```{r}
+#Anova Figure
+# for reproducibility
+set.seed(123)
+data.table::setDT(data_final)
+gad_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = covid_concern,
+  y = gad_total,
+  title = "GAD by Covid Concern",
+  messages = FALSE,
+  xlab = "COVID-19 Concern",
+  ylab = "GAD Score",
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+  # adding new components to `ggstatsplot` default
+gad_anova_figure
+
+#Barplot Figure
+#GAD Table
+gad_table <- data_final %>% 
+  dplyr::select(c(gad_total, covid_concern))
+
+gad_table <- gad_table %>% 
+  mutate(dx_threshold = ifelse(gad_total %in% '0', "0",
+                               ifelse(gad_total %in% '1', "0",
+                                      ifelse(gad_total %in% '2', "0", "1"))))
+
+gad_table$dx_threshold <- factor(gad_table$dx_threshold,
+                                  levels = c(0, 1),
+                                  labels = c("Healthy", 
+                                             "GAD Dx"))
+
+data.table::setDT(gad_table)
+
+
+library(extrafont)
+
+set.seed(123)
+gad_plot_figure <- ggstatsplot::ggbarstats(
+  data = gad_table,
+  x = dx_threshold,
+  y = covid_concern,
+  size=1,
+  sampling.plan = "jointMulti",
+  x.axis.orientation = "slant",
+  #ggtheme = hrbrthemes::theme_modern_rc(),
+  ggstatsplot.layer = FALSE,
+  ggplot.component = ggplot2::theme(axis.text.x = ggplot2::element_text(face = "italic"),text = element_text(size = 20),legend.title = element_blank()),
+  palette = "Set2",
+  messages = FALSE
+)
+
+
+gad_plot_figure
+
+#Gad Pie Chart
+gad_pie <- ggstatsplot::ggpiestats(
+  data = gad_table,
+  x = dx_threshold,
+  y = covid_concern,
+  title = "GAD Dx by COVID-19 Concern", # title for the plot
+  legend.title = "Diagnostic Threshold", # title for the legend
+  factor.levels = c("1 = GAD Dx", "0 = No Dx"), # renaming the factor level names (`x`)
+  messages = FALSE)
+gad_pie
+
+#Combine Figures
+ggpubr::ggarrange(gad_anova_figure, gad_plot_figure,
+                  labels = c("A", "B"),
+                  ncol = 1, nrow = 2)
+```
+
+###MLM GAD by COVID Concern
+```{r}
+
+data_final$covid_concern_integer <- as.integer(data_final$covid_concern)
+
+#Unadjusted Model
+# Check for homogeneity of variance
+#leveneTest(covid_concern_integer ~ gad_total, center = mean, data = data_final)
+
+# ANCOVA
+gad_covid_model_unadjusted <- lmer(covid_concern_integer ~ gad_total + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(gad_covid_model_unadjusted)
+sjPlot::tab_model(gad_covid_model_unadjusted)
+#effectsize::cohens_f(gad_covid_model_unadjusted)
+sjstats::anova_stats(gad_covid_model_unadjusted)
+AIC(gad_covid_model_unadjusted)
+BIC(gad_covid_model_unadjusted)
+
+
+# Check residuals for normality
+gad_covid_model_residuals_unadjusted <- resid(gad_covid_model_unadjusted)
+shapiro.test(gad_covid_model_residuals_unadjusted)
+
+#Adjusted Model
+# Check for homogeneity of variance
+#leveneTest(covid_concern_integer ~ gad_total, center = mean, data = data_final)
+
+# ANCOVA
+gad_covid_model_adjusted <- lmer(covid_concern_integer ~ gad_total + age + gender_cleaned + date +  (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(gad_covid_model_adjusted)
+sjPlot::tab_model(gad_covid_model_adjusted)
+#effectsize::cohens_f(gad_covid_model_adjusted)
+sjstats::anova_stats(gad_covid_model_adjusted)
+AIC(gad_covid_model_adjusted)
+BIC(gad_covid_model_adjusted)
+
+# Check residuals for normality
+gad_covid_model_residuals_adjusted <- resid(gad_covid_model_adjusted)
+shapiro.test(gad_covid_model_residuals_adjusted)
+
+#Compare Models
+anova(gad_covid_model_unadjusted, gad_covid_model_adjusted)
+
+
+
+#Print Table
+sjPlot::tab_model(gad_covid_model_unadjusted, gad_covid_model_adjusted,
+          pred.labels = c("Intercept", "GAD Score", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: COVID-19 Concern", "Adjusted Model: COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",
+          digits = 3,
+          show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          show.se = TRUE,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/gad_covid_table.doc")
+```
+
+##Analyses 2b:PHQ by COVID Concern
+###Figures
+```{r}
+
+# for reproducibility
+set.seed(123)
+
+phq_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = covid_concern,
+  y = phq_total,
+  title = "PHQ by Covid Concern",
+  xlab = "COVID-19 Concern",
+  ylab = "PHQ Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+  # adding new components to `ggstatsplot` default
+phq_anova_figure
+
+#PHQ Table
+phq_table <- data_final %>% 
+  dplyr::select(c(phq_total, covid_concern))
+
+phq_table <- phq_table %>% 
+  mutate(dx_threshold = ifelse(phq_total %in% '0', "0",
+                               ifelse(phq_total %in% '1', "0",
+                                      ifelse(phq_total %in% '2', "0", "1"))))
+
+phq_table$dx_threshold <- factor(phq_table$dx_threshold,
+                                 levels = c(0, 1),
+                                 labels = c("Healthy", 
+                                            "PHQ Dx"))
+
+data.table::setDT(phq_table)
+
+
+set.seed(123)
+
+
+phq_plot_figure <- ggstatsplot::ggbarstats(
+  data = phq_table,
+  x = dx_threshold,
+  y = covid_concern,
+  sampling.plan = "jointMulti",
+  x.axis.orientation = "slant",
+  xlab = "COVID-19 Concern",
+  #ggtheme = hrbrthemes::theme_modern_rc(),
+  ggstatsplot.layer = FALSE,
+  ggplot.component = ggplot2::theme(axis.text.x = ggplot2::element_text(face = "italic"),text = element_text(size = 20),legend.title = element_blank()),
+  palette = "Set2",
+  messages = FALSE
+)
+
+phq_plot_figure
+
+phq_pie <- ggstatsplot::ggpiestats(
+  data = phq_table,
+  x = dx_threshold,
+  y = covid_concern,
+  title = "Depression Dx by COVID-19 Concern", # title for the plot
+  legend.title = "Diagnostic Threshold", # title for the legend
+  factor.levels = c("1 = Depression Dx", "0 = No Dx"), # renaming the factor level names (`x`)
+  messages = FALSE)
+phq_pie
+library(ggpubr)
+#Combine Figures
+ggpubr::ggarrange(gad_plot_figure, phq_plot_figure,
+                  labels = c("A", "B"),
+                  ncol = 1, nrow = 2) %>%
+  ggexport(filename = "figure.png",width=900,height=1200)
+```
+
+##Combine Figures
+```{r}
+#Combine Figures
+# test <- ggpubr::ggarrange(gad_anova_figure, phq_anova_figure,gad_plot_figure, phq_plot_figure,
+#                   labels = c("A", "B", "C", "D"),
+#                   ncol = 2, nrow = 2) 
+# 
+# test %>%
+#   ggpubr::ggexport(filename = "test.png", width=1000,height=607)
+```
+
+
+
+###Anova PHQ and Covid Concern
+```{r}
+# Check for homogeneity of variance
+#leveneTest(covid_concern_integer ~ phq_total, center = mean, data = data_final)
+
+# ANCOVA
+phq_covid_model_unadjusted <- lmer(covid_concern_integer ~ phq_total + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(phq_covid_model_unadjusted)
+tab_model(phq_covid_model_unadjusted)
+#effectsize::cohens_f(phq_covid_model_unadjusted)
+sjstats::anova_stats(phq_covid_model_unadjusted)
+AIC(phq_covid_model_unadjusted)
+BIC(phq_covid_model_unadjusted)
+
+
+# Check residuals for normality
+phq_covid_model_residuals_unadjusted <- resid(phq_covid_model_unadjusted)
+shapiro.test(phq_covid_model_residuals_unadjusted)
+
+
+#Adjusted Model
+# Check for homogeneity of variance
+#leveneTest(covid_concern_integer ~ phq_total, center = mean, data = data_final)
+
+# ANCOVA
+phq_covid_model_adjusted <- lmer(covid_concern_integer ~ phq_total + age + gender_cleaned + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(phq_covid_model_adjusted)
+tab_model(phq_covid_model_adjusted)
+#effectsize::cohens_f(phq_covid_model_adjusted)
+sjstats::anova_stats(phq_covid_model_adjusted)
+AIC(phq_covid_model_adjusted)
+BIC(phq_covid_model_adjusted)
+
+# Check residuals for normality
+phq_covid_model_residuals_adjusted <- resid(phq_covid_model_adjusted)
+shapiro.test(phq_covid_model_residuals_adjusted)
+
+#Compare Models
+anova(phq_covid_model_unadjusted, phq_covid_model_adjusted)
+
+#Print Table
+tab_model(phq_covid_model_unadjusted, phq_covid_model_adjusted,
+          pred.labels = c("Intercept", "'PHQ Score", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: COVID-19 Concern", "Adjusted Model: COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.se = TRUE,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/phq_covid_table.doc")
+```
+
+
+##World Cases by COVID Concern
+```{r}
+# for reproducibility
+set.seed(123)
+
+world_cases_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = covid_concern,
+  y = confirmed_world,
+  title = "World Cases by Covid Concern",
+  xlab = "COVID-19 Concern",
+  ylab = "Reported World Cases",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+world_cases_anova_figure
+
+# Log transformed
+world_cases_anova_figure_log <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = covid_concern,
+  y = confirmed_world_log,
+  title = "World Cases by Covid Concern",
+  xlab = "COVID-19 Concern",
+  ylab = "Reported World Cases (Log Transformed)",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+world_cases_anova_figure_log
+
+# Check for homogeneity of variance
+leveneTest(confirmed_world ~ covid_concern, center = mean, data = data_final)
+
+# ANCOVA
+world_cases_covid_model_unadjusted <- lmer(covid_concern_integer ~ confirmed_world_log  + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE) # I changed the dependent variable to the log transformed variable
+summary(world_cases_covid_model_unadjusted)
+tab_model(world_cases_covid_model_unadjusted)
+#effectsize::cohens_f(world_cases_covid_model_unadjusted)
+sjstats::anova_stats(world_cases_covid_model_unadjusted)
+AIC(world_cases_covid_model_unadjusted)
+BIC(world_cases_covid_model_unadjusted)
+
+
+# Check residuals for normality
+world_cases_covid_model_residuals_unadjusted <- resid(world_cases_covid_model_unadjusted)
+shapiro.test(world_cases_covid_model_residuals_unadjusted)
+
+
+#Adjusted Model
+# Check for homogeneity of variance
+leveneTest(confirmed_world_log ~ covid_concern, center = mean, data = data_final)
+
+# ANCOVA
+world_cases_covid_model_adjusted <- lmer(covid_concern_integer ~ confirmed_world_log + age + gender_cleaned + date  +  (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(world_cases_covid_model_adjusted)
+tab_model(world_cases_covid_model_adjusted)
+#effectsize::cohens_f(world_cases_covid_model_adjusted)
+sjstats::anova_stats(world_cases_covid_model_adjusted)
+AIC(world_cases_covid_model_adjusted)
+BIC(world_cases_covid_model_adjusted)
+
+# Check residuals for normality
+world_cases_covid_model_residuals_adjusted <- resid(world_cases_covid_model_adjusted)
+shapiro.test(world_cases_covid_model_residuals_adjusted)
+
+#Compare Models
+anova(world_cases_covid_model_unadjusted, world_cases_covid_model_adjusted)
+
+#Print Table
+tab_model(world_cases_covid_model_unadjusted, world_cases_covid_model_adjusted,
+          pred.labels = c("Intercept", "Confirmed World Cases", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: COVID-19 Concern", "Adjusted Model: COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.se = TRUE,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/world_cases_covid_table.doc")
+```
+
+##Country Cases by COVID Concern
+```{r}
+# for reproducibility
+set.seed(123)
+
+#Raw Cases
+country_cases_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = covid_concern,
+  y = confirmed_country,
+  title = "Country Cases by Covid Concern",
+  xlab = "COVID-19 Concern",
+  ylab = "Reported Cases in Country",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+country_cases_anova_figure
+
+#Log transformed
+country_cases_anova_figure_log <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = covid_concern,
+  y = confirmed_country_log,
+  title = "Country Cases by Covid Concern",
+  xlab = "COVID-19 Concern",
+  ylab = "Reported Cases in Country (Log Transformed)",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+country_cases_anova_figure_log
+
+# Check for homogeneity of variance
+leveneTest(confirmed_country ~ covid_concern, center = mean, data = data_final)
+
+# ANCOVA
+country_cases_covid_model_unadjusted <- lmer(covid_concern_integer ~ confirmed_country_log + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(country_cases_covid_model_unadjusted)
+tab_model(country_cases_covid_model_unadjusted)
+#effectsize::cohens_f(country_cases_covid_model)
+sjstats::anova_stats(country_cases_covid_model_unadjusted)
+AIC(country_cases_covid_model_unadjusted)
+BIC(country_cases_covid_model_unadjusted)
+
+
+# Check residuals for normality
+country_cases_covid_model_residuals_unadjusted <- resid(country_cases_covid_model_unadjusted)
+shapiro.test(country_cases_covid_model_residuals_unadjusted)
+
+
+#Adjusted Model
+# Check for homogeneity of variance
+#leveneTest(confirmed_country_log ~ covid_concern, center = mean, data = data_final)
+
+# ANCOVA
+country_cases_covid_model_adjusted <- lmer(covid_concern_integer ~ confirmed_country_log + age  + gender_cleaned + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned), REML=FALSE)
+summary(country_cases_covid_model_adjusted)
+tab_model(country_cases_covid_model_adjusted)
+#effectsize::cohens_f(world_cases_covid_model_adjusted)
+sjstats::anova_stats(country_cases_covid_model_adjusted)
+AIC(country_cases_covid_model_adjusted)
+BIC(country_cases_covid_model_adjusted)
+
+# Check residuals for normality
+country_cases_covid_model_residuals_adjusted <- resid(country_cases_covid_model_adjusted)
+shapiro.test(country_cases_covid_model_residuals_adjusted)
+
+#Compare Models
+anova(country_cases_covid_model_unadjusted, country_cases_covid_model_adjusted)
+
+#Print Table
+tab_model(country_cases_covid_model_unadjusted, country_cases_covid_model_adjusted,
+          pred.labels = c("Intercept", "Confirmed Cases Within Country", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: COVID-19 Concern", "Adjusted Model: COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.se = TRUE,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/country_cases_covid_table.doc")
+```
+
+##Compare epi to mental health models
+```{r}
+
+data_final <- data_final %>% 
+  mutate(confirmed_country_log = ifelse(is.na(confirmed_country_log), 0, confirmed_country_log)) 
+model_data  <- data_final %>%
+  drop_na(covid_concern_integer,gad_total,phq_total,confirmed_country_log,country_region,country_diff_days,days_since_lockdown)
+
+mental_health_model <- lmer(covid_concern_integer ~ gad_total + phq_total+ age + gender_cleaned + date + (1|country_region) , model_data,REML=FALSE)
+
+epi_model <- lmer(covid_concern_integer ~ confirmed_country_log + confirmed_world_log + age +gender_cleaned + date + (1|country_region), model_data,REML=FALSE)
+
+anova(epi_model,mental_health_model)
+
+tab_model(mental_health_model, epi_model,
+          pred.labels = c("Intercept", "GAD Score","PHQ Score", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date","Confirmed Country Cases","Confirmed World Cases"),
+          dv.labels = c("Mental Health Model", "Epdemiological Model"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.se = TRUE,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/epi_vs_psych_concern_table.doc")
+
+mental_health_model <- lmer(covid_concern_integer ~ gad_total + phq_total + (1|country_region) , model_data,REML=FALSE)
+
+ggstatsplot::ggcoefstats(
+  x = mental_health_model,
+  xlab = "Regression Coefficient",
+  ylab = "Predictor"
+)
+```
+
+```{r}
+
+full_model_covid_concern <- lmer(covid_concern_integer ~ gad_total + phq_total + confirmed_world_log + confirmed_country_log + age + gender_cleaned + date + (1|country_region) , model_data,REML=FALSE)
+
+
+tab_model(intermediate_model, pred.labels = c("Intercept", "GAD Score","PHQ Score","Confirmed World Cases", "Confirmed Country Cases", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/complete_covid_concern_table.doc")
+
+
+```
+
+
+
+#Analysis 3: Behavior Change
+
+##Covid Concern and Behavior Change
+```{r}
+data_final$covid_concern_num <- as.numeric(data_final$covid_concern)
+
+data_final$self_quarantine_integer <- as.integer(data_final$self_quarantine)
+
+# for reproducibility
+#set.seed(123)
+#data_final$self_quarantine
+#data.table::setDT(data_final)
+quarantine_concern_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = covid_concern_num,
+  title = "COVID Concern by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "COVID-19 Concern",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_concern_anova_figure
+
+# Check for homogeneity of variance
+leveneTest(covid_concern_num ~ self_quarantine, center = mean, data = data_final)
+
+# ANOVA
+quarantine_concern_covid_model_unadjusted <- lmer(self_quarantine_integer ~ covid_concern_integer + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(quarantine_concern_covid_model_unadjusted)
+tab_model(quarantine_concern_covid_model_unadjusted)
+#effectsize::cohens_f(quarantine_concern_covid_model_unadjusted)
+sjstats::anova_stats(quarantine_concern_covid_model_unadjusted)
+AIC(quarantine_concern_covid_model_unadjusted)
+BIC(quarantine_concern_covid_model_unadjusted)
+
+
+# Check residuals for normality
+quarantine_concern_covid_model_residuals_unadjusted <- resid(quarantine_concern_covid_model_unadjusted)
+shapiro.test(quarantine_concern_covid_model_residuals_unadjusted)
+
+
+# Check for homogeneity of variance
+leveneTest(covid_concern_num ~ self_quarantine, center = mean, data = data_final)
+
+# ANCOVA
+quarantine_concern_covid_model_adjusted <- lmer(self_quarantine_integer ~ covid_concern_integer + gender_cleaned + age + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(quarantine_concern_covid_model_adjusted)
+tab_model(quarantine_concern_covid_model_adjusted)
+#effectsize::cohens_f(quarantine_concern_covid_model_unadjusted)
+sjstats::anova_stats(quarantine_concern_covid_model_adjusted)
+AIC(quarantine_concern_covid_model_adjusted)
+BIC(quarantine_concern_covid_model_adjusted)
+
+levels(data_final$self_quarantine)
+
+# Check residuals for normality
+quarantine_concern_covid_model_residuals_adjusted <- resid(quarantine_concern_covid_model_adjusted)
+shapiro.test(quarantine_concern_covid_model_residuals_adjusted)
+
+anova(quarantine_concern_covid_model_unadjusted,quarantine_concern_covid_model_adjusted)
+
+tab_model(quarantine_concern_covid_model_unadjusted, quarantine_concern_covid_model_adjusted,
+          pred.labels = c("Intercept", "COVID-19 Concern", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: Self Quarantine", "Adjusted Model: Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_covid_table.doc")
+```
+
+
+```{r}
+mental_model_q <- lmer(self_quarantine_integer ~ phq_total  + gad_total + gender_cleaned + age + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned,covid_concern_num,phq_total,gad_total),REML=FALSE)
+
+epi_model_q <- lmer(self_quarantine_integer ~ confirmed_country_log  + confirmed_world_log + gender_cleaned + age + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned,covid_concern_num,phq_total,gad_total),REML=FALSE)               
+                         
+                         
+covid_model_q <- lmer(self_quarantine_integer ~ covid_concern_num + gender_cleaned + age + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned,covid_concern_num,phq_total,gad_total),REML=FALSE)
+
+tab_model(epi_model_q,
+          pred.labels = c("Intercept", "Confirmed Country Cases", "Confirmed World Cases", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Age","Date"),
+          dv.labels = c("Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_epi_table.doc")
+``` 
+
+
+```{r}
+full_model_q <- lmer(self_quarantine_integer ~ phq_total  + gad_total + confirmed_country_log  + confirmed_world_log + covid_concern_integer + gender_cleaned + age + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned,covid_concern_integer,phq_total,gad_total),REML=FALSE)
+
+tab_model(full_model_q,pred.labels = c("Intercept", "PHQ Score","GAD Score","Confirmed Country Cases", "Confirmed World Cases", "COVID-19 Concern", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Mental Health Model"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/complete_quarantine_table.doc")
+
+
+```
+
+
+##GAD and Behavior Change
+```{r}
+# for reproducibility
+set.seed(123)
+
+
+quarantine_gad_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = gad_total,
+  title = "GAD by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "GAD Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_gad_anova_figure
+
+# Check for homogeneity of variance
+#leveneTest(gad_total ~ self_quarantine, center = mean, data = data_final)
+
+# ANOVA
+quarantine_gad_model_unadjusted <- lmer(self_quarantine_integer ~ gad_total + (1|country_region) , data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(quarantine_gad_model_unadjusted)
+tab_model(quarantine_gad_model_unadjusted)
+#effectsize::cohens_f(quarantine_gad_model)
+sjstats::anova_stats(quarantine_gad_model_unadjusted)
+AIC(quarantine_gad_model_unadjusted)
+BIC(quarantine_gad_model_unadjusted)
+
+
+# Check residuals for normality
+quarantine_gad_model_residuals_unadjusted <- resid(quarantine_gad_model_unadjusted)
+shapiro.test(quarantine_gad_model_residuals_unadjusted)
+
+# ANOVA
+quarantine_gad_model_adjusted <- lmer(self_quarantine_integer ~ gad_total + age + gender_cleaned + date + (1|country_region) , data = drop_na(data_final,age,gender_cleaned,gad_total,phq_total),REML=FALSE)
+summary(quarantine_gad_model_adjusted)
+tab_model(quarantine_gad_model_adjusted)
+#effectsize::cohens_f(quarantine_gad_model)
+sjstats::anova_stats(quarantine_gad_model_adjusted)
+AIC(quarantine_gad_model_adjusted)
+BIC(quarantine_gad_model_adjusted)
+
+
+# Check residuals for normality
+quarantine_gad_model_residuals_adjusted <- resid(quarantine_gad_model_adjusted)
+shapiro.test(quarantine_gad_model_residuals_adjusted)
+
+anova(quarantine_gad_model_unadjusted,quarantine_gad_model_adjusted)
+
+tab_model(quarantine_gad_model_unadjusted, quarantine_gad_model_adjusted,
+          pred.labels = c("Intercept", "GAD Score", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: Self Quarantine", "Adjusted Model: Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_gad_table.doc")
+```
+
+##PHQ and Behavior Change
+```{r}
+# for reproducibility
+set.seed(123)
+
+quarantine_phq_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = phq_total,
+  title = "PHQ by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "PHQ Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_phq_anova_figure
+
+# Check for homogeneity of variance
+leveneTest(phq_total ~ self_quarantine, center = mean, data = data_final)
+
+# ANCOVA
+quarantine_phq_model_unadjusted <- lmer(self_quarantine_integer ~ phq_total +  (1|country), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(quarantine_phq_model_unadjusted)
+tab_model(quarantine_phq_model_unadjusted)
+#effectsize::cohens_f(quarantine_phq_model)
+sjstats::anova_stats(quarantine_phq_model_unadjusted)
+AIC(quarantine_phq_model_unadjusted)
+BIC(quarantine_phq_model_unadjusted)
+
+
+# Check residuals for normality
+quarantine_phq_model_residuals_unadjusted <- resid(quarantine_phq_model_unadjusted)
+shapiro.test(quarantine_phq_model_residuals_unadjusted)
+
+
+# Adjusted
+quarantine_phq_model_adjusted <- lmer(self_quarantine_integer ~ phq_total + age + gender_cleaned + date + (1|country), data = drop_na(data_final,age,gender_cleaned,gad_total,phq_total),REML=FALSE)
+summary(quarantine_phq_model_adjusted)
+tab_model(quarantine_phq_model_adjusted)
+#effectsize::cohens_f(quarantine_phq_model)
+sjstats::anova_stats(quarantine_phq_model_adjusted)
+AIC(quarantine_phq_model_adjusted)
+BIC(quarantine_phq_model_adjusted)
+
+
+# Check residuals for normality
+quarantine_phq_model_residuals_adjusted <- resid(quarantine_phq_model_adjusted)
+shapiro.test(quarantine_phq_model_residuals_adjusted)
+
+anova(quarantine_phq_model_unadjusted,quarantine_phq_model_adjusted)
+
+tab_model(quarantine_phq_model_unadjusted, quarantine_phq_model_adjusted,
+          pred.labels = c("Intercept", "PHQ Score", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: Self Quarantine", "Adjusted Model: Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_PHQ_table.doc")
+```
+
+```{r}
+# Adjusted
+quarantine_mental_model_adjusted <- lmer(self_quarantine_integer ~ phq_total + gad_total + age + gender_cleaned + date + (1|country), data = drop_na(data_final,age,gender_cleaned,gad_total,phq_total),REML=FALSE)
+
+tab_model(quarantine_mental_model_adjusted,
+          pred.labels = c("Intercept", "PHQ Score", "GAD Score","Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_mental_table.doc")
+```
+
+
+##Total World Cases and Behavior Change
+```{r}
+# for reproducibility
+set.seed(123)
+
+#raw cases
+quarantine_world_total_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = confirmed_world,
+  title = "Total World Cases by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "Reported World Cases",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_world_total_anova_figure
+
+#log transformed cases
+quarantine_world_total_anova_figure_log <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = confirmed_world_log,
+  title = "Total World Cases by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "Reported World Cases (Log Transformed)",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_world_total_anova_figure_log
+
+# Check for homogeneity of variance
+leveneTest(confirmed_world ~ self_quarantine, center = mean, data = data_final)
+
+# ANCOVA
+quarantine_world_total_model_unadjusted <- lmer(self_quarantine_integer ~ confirmed_world_log + (1|country_region) , data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(quarantine_world_total_model_unadjusted)
+tab_model(quarantine_world_total_model_unadjusted)
+#effectsize::cohens_f(quarantine_world_total_model)
+sjstats::anova_stats(quarantine_world_total_model_unadjusted)
+AIC(quarantine_world_total_model_unadjusted)
+BIC(quarantine_world_total_model_unadjusted)
+
+
+# Check residuals for normality
+quarantine_world_total_model_residuals_unadjusted <- resid(quarantine_world_total_model_unadjusted)
+shapiro.test(quarantine_world_total_model_residuals_unadjusted)
+
+# Adjusted
+quarantine_world_total_model_adjusted <- lmer(self_quarantine_integer ~ confirmed_world_log + age + gender_cleaned + date + (1|country_region) , data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(quarantine_world_total_model_adjusted)
+tab_model(quarantine_world_total_model_adjusted)
+#effectsize::cohens_f(quarantine_world_total_model)
+sjstats::anova_stats(quarantine_world_total_model_adjusted)
+AIC(quarantine_world_total_model_adjusted)
+BIC(quarantine_world_total_model_adjusted)
+
+
+# Check residuals for normality
+quarantine_world_total_model_residuals_adjusted <- resid(quarantine_world_total_model_adjusted)
+shapiro.test(quarantine_world_total_model_residuals_adjusted)
+
+anova(quarantine_world_total_model_unadjusted,quarantine_world_total_model_adjusted)
+
+tab_model(quarantine_world_total_model_unadjusted, quarantine_world_total_model_adjusted,
+          pred.labels = c("Intercept", "Confirmed World Cases", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: Self Quarantite", "Adjusted Model: Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_TWC_table.doc")
+```
+
+##Total Country Cases and Behavior Change
+```{r}
+# for reproducibility
+set.seed(123)
+
+#raw cases
+quarantine_country_total_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = confirmed_country,
+  title = "Total Country Cases by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "Reported Cases in Country",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_country_total_anova_figure
+
+#Log Transformed Cases
+quarantine_country_total_anova_figure_log <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = self_quarantine,
+  y = confirmed_country_log,
+  title = "Total Country Cases by Behavior Change",
+  xlab = "Self Quarantine",
+  ylab = "Reported Cases in Country (Log Transformed)",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+quarantine_country_total_anova_figure_log
+
+# Check for homogeneity of variance
+leveneTest(confirmed_country_log ~ self_quarantine, center = mean, data = data_final)
+
+# ANCOVA
+quarantine_country_total_model_unadjusted <- lmer(self_quarantine_integer ~ confirmed_country_log + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE, lmerControl(optimizer = "Nelder_Mead"))
+summary(quarantine_country_total_model_unadjusted)
+tab_model(quarantine_country_total_model_unadjusted)
+#effectsize::cohens_f(quarantine_country_total_model_unadjusted)
+sjstats::anova_stats(quarantine_country_total_model_unadjusted)
+AIC(quarantine_country_total_model_unadjusted)
+BIC(quarantine_country_total_model_unadjusted)
+
+
+# Check residuals for normality
+quarantine_country_total_model_residuals_unadjusted <- resid(quarantine_country_total_model_unadjusted)
+shapiro.test(quarantine_country_total_model_residuals_unadjusted)
+
+
+# Adjusted ANCOVA
+quarantine_country_total_model_adjusted <- lmer(self_quarantine_integer ~ confirmed_country_log + age + gender_cleaned +  date + (1|country_region), data = drop_na(data_final,age,gender_cleaned), REML=FALSE, lmerControl(optimizer = "Nelder_Mead"))
+tab_model(quarantine_country_total_model_adjusted)
+#effectsize::cohens_f(quarantine_country_total_model)
+sjstats::anova_stats(quarantine_country_total_model_adjusted)
+AIC(quarantine_country_total_model_adjusted)
+BIC(quarantine_country_total_model_adjusted)
+
+
+# Check residuals for normality
+quarantine_country_total_model_residuals_adjusted <- resid(quarantine_country_total_model_adjusted)
+shapiro.test(quarantine_country_total_model_residuals_adjusted)
+
+anova(quarantine_country_total_model_unadjusted,quarantine_country_total_model_adjusted)
+
+tab_model(quarantine_country_total_model_unadjusted, quarantine_country_total_model_adjusted,
+          pred.labels = c("Intercept", "Confirmed Cases Within Country", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: Self Quarantine", "Adjusted Model: Self Quarantine"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/quarantine_TCC_table.doc")
+```
+
+
+
+#Analysis 4: Economic Impacts
+
+##Lost Job and COVID Concern
+```{r}
+data_final$covid_concern_integer <- as.integer(data_final$covid_concern)
+
+job_covid_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = job_lost,
+  y = covid_concern_integer,
+  title = "COVID Concern by Loss of Job",
+  xlab = "Loss of Job",
+  ylab = "COVID-19 Concern",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+job_covid_anova_figure
+
+
+# Check for homogeneity of variance
+leveneTest(covid_concern_integer ~ job_lost, center = mean, data = data_final)
+
+# ANCOVA
+job_covid_model_unadjusted <- lmer(covid_concern_integer ~ job_lost + (1|country_region) + date, data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(job_covid_model_unadjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(job_covid_model_unadjusted)
+sjstats::anova_stats(job_covid_model_unadjusted)
+AIC(job_covid_model_unadjusted)
+BIC(job_covid_model_unadjusted)
+
+
+# Check residuals for normality
+job_covid_model_residuals_unadjusted <- resid(job_covid_model_unadjusted)
+shapiro.test(job_covid_model_residuals_unadjusted)
+
+
+# ANCOVA
+job_covid_model_adjusted <- lmer(covid_concern_integer ~ job_lost + age + gender_cleaned + (1|country_region) + date, data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(job_covid_model_adjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(job_covid_model_adjusted)
+sjstats::anova_stats(job_covid_model_adjusted)
+AIC(job_covid_model_adjusted)
+BIC(job_covid_model_adjusted)
+
+
+# Check residuals for normality
+job_covid_model_residuals_adjusted <- resid(job_covid_model_adjusted)
+shapiro.test(job_covid_model_residuals_adjusted)
+
+anova(job_covid_model_unadjusted,job_covid_model_adjusted)
+
+tab_model(job_covid_model_unadjusted, job_covid_model_adjusted,
+          pred.labels = c("Intercept", "Loss of Job", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: COVID-19 Concern", "Adjusted Model: COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/job_covid_table.doc")
+```
+
+
+##Lost Job and GAD
+```{r}
+
+job_gad_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = job_lost,
+  y = gad_total,
+  title = "GAD by Loss of Job",
+  xlab = "Loss of Job",
+  ylab = "GAD Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+job_gad_anova_figure
+
+
+# Check for homogeneity of variance
+leveneTest(gad_total ~ job_lost, center = mean, data = data_final)
+
+# ANCOVA
+job_gad_model_unadjusted <- lmer(gad_total ~ job_lost + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(job_gad_model_unadjusted)
+#effectsize::cohens_f(job_gad_model)
+tab_model(job_gad_model_unadjusted)
+sjstats::anova_stats(job_gad_model_unadjusted)
+AIC(job_gad_model_unadjusted)
+BIC(job_gad_model_unadjusted)
+
+
+# Check residuals for normality
+job_gad_residuals_unadjusted <- resid(job_gad_model_unadjusted)
+shapiro.test(job_gad_residuals_unadjusted)
+
+
+# ANCOVA Adjusted
+job_gad_model_adjusted <- lmer(gad_total ~ job_lost + age + gender_cleaned + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(job_gad_model_adjusted)
+#effectsize::cohens_f(job_gad_model)
+tab_model(job_gad_model_adjusted)
+sjstats::anova_stats(job_gad_model_adjusted)
+AIC(job_gad_model_adjusted)
+BIC(job_gad_model_adjusted)
+
+
+# Check residuals for normality
+job_gad_residuals_adjusted <- resid(job_gad_model_adjusted)
+shapiro.test(job_gad_residuals_adjusted)
+
+anova(job_gad_model_unadjusted,job_gad_model_adjusted)
+
+tab_model(job_gad_model_unadjusted, job_gad_model_adjusted,
+          pred.labels = c("Intercept", "Loss of Job", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: GAD Scores", "Adjusted Model: GAD Scores"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/job_gad_table.doc")
+```
+
+##Lost Job and PHQ
+```{r}
+
+job_phq_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = job_lost,
+  y = phq_total,
+  title = "PHQ by Loss of Job",
+  xlab = "Loss of Job",
+  ylab = "PHQ Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+job_phq_anova_figure
+
+
+# Check for homogeneity of variance
+leveneTest(phq_total ~ job_lost, center = mean, data = data_final)
+
+# ANCOVA
+job_phq_model_unadjusted <- lmer(phq_total ~ job_lost + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned),REML=FALSE)
+summary(job_phq_model_unadjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(job_phq_model_unadjusted)
+sjstats::anova_stats(job_phq_model_unadjusted)
+AIC(job_phq_model_unadjusted)
+BIC(job_phq_model_unadjusted)
+
+
+# Check residuals for normality
+job_phq_model_residuals_unadjusted <- resid(job_phq_model_unadjusted)
+shapiro.test(job_phq_model_residuals_unadjusted)
+
+# ANCOVA adjusted
+job_phq_model_adjusted <- lmer(phq_total ~ job_lost +age + gender_cleaned +date + (1|country_region), data = drop_na(data_final,age,gender_cleaned))
+summary(job_phq_model_adjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(job_phq_model_adjusted)
+sjstats::anova_stats(job_phq_model_adjusted)
+AIC(job_phq_model_adjusted)
+BIC(job_phq_model_adjusted)
+
+
+# Check residuals for normality
+job_covid_model_residuals_adjusted <- resid(job_phq_model_adjusted)
+shapiro.test(job_covid_model_residuals_adjusted)
+
+anova(job_phq_model_unadjusted,job_phq_model_adjusted)
+
+tab_model(job_phq_model_unadjusted, job_phq_model_adjusted,
+          pred.labels = c("Intercept", "Loss of Job", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: PHQ Scores", "Adjusted Model: PHQ Scores"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/job_phq_table.doc")
+```
+
+##Income Lost and COVID Concern
+```{r}
+
+income_covid_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = income_lost,
+  y = covid_concern_integer,
+  title = "COVID Concern by Loss of Income",
+  xlab = "Loss of Income",
+  ylab = "COVID-19 Concern",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+income_covid_anova_figure
+
+
+# Check for homogeneity of variance
+leveneTest(covid_concern_integer ~ income_lost, center = mean, data = data_final)
+
+# ANCOVA
+income_covid_model_unadjusted <- lmer(covid_concern_integer ~ income_lost + (1|country_region) + date, data = drop_na(data_final,age,gender_cleaned), control = lmerControl(optimizer = "Nelder_Mead"))
+summary(income_covid_model_unadjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(income_covid_model_unadjusted)
+sjstats::anova_stats(income_covid_model_unadjusted)
+AIC(income_covid_model_unadjusted)
+BIC(income_covid_model_unadjusted)
+
+
+# Check residuals for normality
+income_covid_model_residuals_unadjusted <- resid(income_covid_model_unadjusted)
+shapiro.test(income_covid_model_residuals_unadjusted)
+
+
+
+# ANCOVA
+income_covid_model_adjusted <- lmer(covid_concern_integer ~ income_lost + age + gender_cleaned +(1|country_region) + date, data = drop_na(data_final,age,gender_cleaned), control = lmerControl(optimizer = "Nelder_Mead"))
+summary(income_covid_model_adjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(income_covid_model_adjusted)
+sjstats::anova_stats(income_covid_model_adjusted)
+AIC(income_covid_model_adjusted)
+BIC(income_covid_model_adjusted)
+
+
+# Check residuals for normality
+income_covid_model_residuals_adjusted <- resid(income_covid_model_adjusted)
+shapiro.test(income_covid_model_residuals_adjusted)
+
+anova(income_covid_model_unadjusted,income_covid_model_adjusted)
+
+tab_model(income_covid_model_unadjusted, income_covid_model_adjusted,
+          pred.labels = c("Intercept", "Loss of Income", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer", "Date"),
+          dv.labels = c("Unadjusted Model: COVID-19 Concern", "Adjusted Model: COVID-19 Concern"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/income_covid_table.doc")
+```
+
+##Income Job and GAD
+```{r}
+
+income_gad_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = income_lost,
+  y = gad_total,
+  title = "GAD by Loss of Income",
+  xlab = "Loss of Income",
+  ylab = "GAD Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+income_gad_anova_figure
+
+
+# Check for homogeneity of variance
+leveneTest(gad_total ~ income_lost, center = mean, data = data_final)
+
+# ANCOVA
+income_gad_model_unadjusted <- lmer(gad_total ~ income_lost + (1|country_region), data = drop_na(data_final,age,gender_cleaned))
+summary(income_gad_model_unadjusted)
+#effectsize::cohens_f(income_gad_model)
+tab_model(income_gad_model_unadjusted)
+sjstats::anova_stats(income_gad_model_unadjusted)
+AIC(income_gad_model_unadjusted)
+BIC(income_gad_model_unadjusted)
+
+
+# Check residuals for normality
+income_gad_residuals_unadjusted <- resid(income_gad_model_unadjusted)
+shapiro.test(income_gad_residuals_unadjusted)
+
+
+
+# ANCOVA
+income_gad_model_adjusted <- lmer(gad_total ~ income_lost + age + gender_cleaned + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned))
+summary(income_gad_model_adjusted)
+#effectsize::cohens_f(income_gad_model)
+tab_model(income_gad_model_adjusted)
+sjstats::anova_stats(income_gad_model_adjusted)
+AIC(income_gad_model_adjusted)
+BIC(income_gad_model_adjusted)
+
+
+# Check residuals for normality
+income_gad_residuals_adjusted <- resid(income_gad_model_adjusted)
+shapiro.test(income_gad_residuals_adjusted)
+
+anova(income_gad_model_unadjusted,income_gad_model_adjusted)
+
+tab_model(income_gad_model_unadjusted, income_gad_model_adjusted,
+          pred.labels = c("Intercept", "Loss of Income", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: GAD Scores", "Adjusted Model: GAD Scores"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/income_gad_table.doc")
+```
+
+
+##Lost Income and PHQ
+```{r}
+
+income_phq_anova_figure <- ggstatsplot::ggbetweenstats(
+  data = data_final,
+  x = income_lost,
+  y = phq_total,
+  title = "PHQ by Loss of Job",
+  xlab = "Loss of Income",
+  ylab = "PHQ Score",
+  messages = FALSE,
+  pairwise.comparisons = TRUE, # display significant pairwise comparisons
+  pairwise.annotation = "p.value", # how do you want to annotate the pairwise comparisons
+  p.adjust.method = "bonferroni") # method for adjusting p-values for multiple comparisons
+# adding new components to `ggstatsplot` default
+income_phq_anova_figure
+
+
+# Check for homogeneity of variance
+leveneTest(phq_total ~ income_lost, center = mean, data = data_final)
+
+# ANCOVA
+income_phq_model_unadjusted <- lmer(phq_total ~ income_lost + date + (1|country_region), data = drop_na(data_final,age,gender_cleaned))
+summary(income_phq_model_unadjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(income_phq_model_unadjusted)
+sjstats::anova_stats(income_phq_model_unadjusted)
+AIC(income_phq_model_unadjusted)
+BIC(income_phq_model_unadjusted)
+
+
+# Check residuals for normality
+income_phq_model_residuals_unadjusted <- resid(income_phq_model_unadjusted)
+shapiro.test(income_phq_model_residuals_unadjusted)
+
+
+# ANCOVA
+income_phq_model_adjusted <- lmer(phq_total ~ income_lost + age + gender_cleaned+ date + (1|country_region), data = drop_na(data_final,age,gender_cleaned))
+summary(income_phq_model_adjusted)
+#effectsize::cohens_f(job_covid_model)
+tab_model(income_phq_model_adjusted)
+sjstats::anova_stats(income_phq_model_adjusted)
+AIC(income_phq_model_adjusted)
+BIC(income_phq_model_adjusted)
+
+
+# Check residuals for normality
+income_phq_model_residuals_adjusted <- resid(income_phq_model_adjusted)
+shapiro.test(income_phq_model_residuals_adjusted)
+
+anova(income_phq_model_adjusted,income_phq_model_unadjusted)
+
+tab_model(income_phq_model_unadjusted, income_phq_model_adjusted,
+          pred.labels = c("Intercept", "Loss of Income", "Age", "Gender: Woman",  "Gender: Nonbinary","Gender: Prefer to Self Describe","Gender: Prefer not to Answer","Date"),
+          dv.labels = c("Unadjusted Model: PHQ Scores", "Adjusted Model: PHQ Scores"),
+          string.ci = "Conf. Int (95%)",
+          string.p = "P-Value",show.icc=FALSE,show.r2=FALSE,show.se=TRUE,
+          digits = 3,
+          show.aic = TRUE,
+          file = "~/Dropbox/COVID-19 Study/Tables/income_phq_table.doc")
+```
+
+#Deidentify Data
+```{r}
+data_osf <- data_final %>% 
+  dplyr::select(response_id,
+                date,
+                gad_total,
+                phq_total,
+                covid_concern_integer,
+                flu_sxs_personal,
+               flu_sxs_other,
+               covid_test,
+               hospitalized,
+               passed_away,
+               lifestyle_changes,
+               self_quarantine,
+               job_lost,
+               job_unable_work,
+               income_lost,
+               money_situation,
+               food_security,
+               gender_cleaned,
+               race_cleaned,
+               ethnicity_cleaned,
+               education,
+               income,
+               age,
+               political_orientation,
+               occupation,
+               recruitment_source,
+               confirmed,
+               deaths,
+               recovered,
+               deaths_country,
+               recovered_country,
+               deaths_world,
+               recovered_world,
+               state_diff_days,
+               confirmed_country,
+               country_diff_days,
+               lockdown_date,
+               confirmed_world,
+               world_diff_days,
+               days_since_lockdown,
+               confirmed_log,
+               confirmed_country_log,
+               confirmed_world_log)
+
+data.table::setDT(data_osf)
+data_osf <- data_osf %>% 
+    dplyr::select(-country_region, -province_state)
+
+#Save Data
+
+write.csv(data_osf, file = "~/Dropbox/COVID-19 Study/Data/deidentified_osf_data.csv")
+```

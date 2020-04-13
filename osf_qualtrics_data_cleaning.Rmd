@@ -1,0 +1,193 @@
+---
+title: "COVID-19 Study Qualtrics Data Cleaning"
+author: "Benjamin W Nelson"
+date: "3/20/2020"
+output: html_document
+---
+
+# Load Packages_______________________________________
+```{r}
+library(psych)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(foreign)
+library(ggplotAssist)
+library(summarytools)
+library(plyr)
+library(corrplot)
+library(tidylog)
+library(readxl)
+library(tidyr)
+library(zoo)
+library(magrittr)
+library(readr)
+library(car)
+library(reshape2)
+library(epiDisplay)
+library(ggstatsplot)
+library(janitor)
+```
+
+#Import Qualtrics Data
+##Create Column Names
+```{r}
+variables <- c("start_date",
+               "end_date",
+               "status",
+               "ip_address",
+               "progress",
+               "duration_secs",
+               "finished",
+               "recorded_data",
+               "response_id",
+               "last_name",
+               "first_name",
+               "email_null",
+               "external_reference",
+               "latitude",
+               "longitude",
+               "distribution_channel",
+               "user_language",
+               "sig_req",
+               "sig_pic",
+               "sig_size",
+               "sig_type",
+               "email",
+               "phq_q1",
+               "phq_q2",
+               "gad_q1",
+               "gad_q2",
+               "covid_concern",
+               "flu_sxs_personal",
+               "flu_sxs_list",
+               "flu_sxs_other",
+               "flu_sxs_other_number",
+               "covid_test",
+               "hospitalized",
+               "hospitalized_number",
+               "passed_away",
+               "passed_away_number",
+               "lifestyle_changes",
+               "self_quarantine",
+               "job_lost",
+               "job_unable_work",
+               "income_lost",
+               "money_situation",
+               "food_security",
+               "gender",
+               "gender_self_describe",
+               "race",
+               "race_self_describe",
+               "attention_check",
+               "ethnicity",
+               "education",
+               "income",
+               "zipcode",
+               "age",
+               "birthdate",
+               "disability",
+               "political_orientation",
+               "occupation",
+               "occupation_self_describe",
+               "household_makeup",
+               "hosehold_makeup_self_describe",
+               "child_ages",
+               "relative_ages",
+               "household_conflict",
+               "recruitment_source",
+               "Recruitment_source_self_describe")
+```
+
+##Import Qualtrics Data
+```{r}
+######Import Subject ID###########
+qualtrics_data <- read_csv("~/Dropbox/COVID-19 Study/Data/COVID19_April 10, 2020_16.59.csv", col_names = variables)
+```
+
+##Remove First Three Columns
+```{r}
+qualtrics_data <- qualtrics_data[-c(1, 2, 3), ]
+qualtrics_data
+```
+
+##Remove Columns that Won't Be Used
+```{r}
+variables_remove <- names(qualtrics_data) %in% c("end_date",
+                                       "status",
+                                       "progress",
+                                       "last_name",
+                                       "first_name",
+                                       "email_null",
+                                       "external_reference",
+                                       "distribution_channel") # Identify variables you want to remove
+
+qualtrics_data <- qualtrics_data[!variables_remove]
+qualtrics_data
+```
+
+
+##Remove rows of participants that didnt do attention test
+```{r}
+qualtrics_data <- filter(qualtrics_data, attention_check == "2")
+
+qualtrics_data <- filter(qualtrics_data, ip_address != "NA")
+```
+
+##Add a variable called "country" and "location" from the ip_address
+```{r}
+qualtrics_data$country <- IPtoCountry::IP_country(qualtrics_data$ip_address)
+
+qualtrics_data$location <- IP_location(qualtrics_data$ip_address)
+```
+
+##Take the location df and put it into the data_final
+```{r}
+qualtrics_data_final <- qualtrics_data %>%
+  mutate(abrv=.$location$abrv) %>% #Takes the variable "abrv" from the df "location" and creates a variable called "df" in data_final
+  mutate(country_region = .$location$country) %>%
+  mutate(province_state = .$location$region) %>%
+  mutate(city = .$location$city) %>%
+  mutate(zipcode2 = .$location$zip) %>%
+  mutate(lat = .$location$lat) %>%
+  mutate(long = .$location$long) %>%
+  mutate(gmt = .$location$gmt)
+```
+
+#Make Dataset of Final Countries
+```{r}
+data_final_countries <- qualtrics_data_final %>% 
+  dplyr::filter(country == "United States" | 
+                  country == "Canada" | 
+                  country == "United Kingdom" | 
+                  country == "Sweden" | 
+                  country == "Switzerland" | 
+                  country == "Spain" | 
+                  country == "Netherlands" | 
+                  country == "Luxembourg" | 
+                  country == "Italy" | 
+                  country == "Ireland" | 
+                  country == "Greece" | 
+                  country == "Germany" | 
+                  country == "Finland" | 
+                  country == "Denmark" | 
+                  country == "France" | 
+                  country == "Belgium" | 
+                  country == "Romania" | 
+                  country == "Serbia" | 
+                  country == "Russian Federation" | 
+                  country == "Czech Republic" | 
+                  country == "Croatia" | 
+                  country == "Bulgaria" | 
+                  country == "Austria" | 
+                  country == "Albania")
+
+data_final_countries <- data_final_countries %>% 
+  dplyr::filter(!(country == "United Kingdom" & city == "Cambridge"))
+```
+
+#Save Data
+```{r}
+write.csv(data_final_countries, file = "~/Dropbox/COVID-19 Study/Data/qualtrics_final_countries.csv")
+```

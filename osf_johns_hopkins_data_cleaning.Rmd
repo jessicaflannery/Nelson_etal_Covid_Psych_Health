@@ -1,0 +1,88 @@
+---
+title: "COVID-19"
+author: "Adam Pettitt"
+date: "3/28/2020"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(janitor)
+rm(list=ls())
+files <- list.files(pattern = "*.csv", path = "~/Dropbox/COVID-19 Study/Data/Johns-Hopkins-Data-COVID-19-master/csse_covid_19_data/csse_covid_19_daily_reports", recursive = TRUE, full.names = TRUE, all.files = TRUE, include.dirs = TRUE)
+files
+
+lst_of_frames <- lapply(files, read_csv)
+
+lst_of_frames <- lapply(lst_of_frames,clean_names,"snake")
+
+
+lst_of_frames <- lapply(lst_of_frames,transform,last_update = as.POSIXct(last_update,format="%m/%d/%Y %H:%M",tz="UTC"))
+
+for(i in 1:length(lst_of_frames)){
+  print("lat" %in% colnames(lst_of_frames[[i]]))
+}
+
+library(lubridate)
+
+lst_of_frames <- lapply(lst_of_frames,function(x) if (x$last_update[1] < years(2000)) {
+  x$last_update <- x$last_update+years(2000)
+  x
+} else {
+  x
+})
+
+
+lst_of_frames <- lapply(lst_of_frames,function(x) if ("lat" %in% colnames(x)) {
+  x <- plyr::rename(x,c("lat"="latitude","long"="longitude"))
+} else {
+  x
+})
+
+
+for(i in 1:length(lst_of_frames)){
+  if(is.numeric(lst_of_frames[[i]]$fips)==TRUE){
+    lst_of_frames[[i]]$fips <- as.character(lst_of_frames[[i]]$fips)
+  }
+}
+
+data_merged <- do.call("bind_rows", lst_of_frames)
+
+data_merged$date <- as.Date(data_merged$last_update)
+```
+
+```{r}
+new_data <- distinct(data_merged)
+
+new_data <- new_data %>%
+  mutate_at(vars(confirmed,deaths,recovered), ~replace_na(., 0))
+
+country_data  <- new_data %>%
+  group_by(country_region,date) %>%
+  summarise(confirmed_country = sum(confirmed), deaths_country = sum(deaths), recovered_country = sum(recovered)) 
+
+write.csv(country_data, file = "~/Dropbox/COVID-19 Study/Data/country_data.csv")
+```
+
+```{r}
+world_data  <- new_data %>%
+  group_by(date) %>%
+  summarise(confirmed_world = sum(confirmed), deaths_world = sum(deaths), recovered_world = sum(recovered)) 
+```
+
+
+```{r}
+state_province_data <- new_data %>%
+  group_by(country_region,province_state,date) %>%
+  summarise(confirmed = sum(confirmed), deaths = sum(deaths), recovered = sum(recovered)) 
+
+write.csv(state_province_data, file = "~/Dropbox/COVID-19 Study/Data/state_province_data.csv")
+
+country_state_data <- merge(state_province_data,country_data, by = c("country_region","date"))
+
+complete_world_data <- merge(country_state_data,world_data,by="date")
+
+write.csv(complete_world_data, file = "~/Dropbox/COVID-19 Study/Data/complete_world_data.csv")
+
+```
+
